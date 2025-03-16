@@ -100,15 +100,18 @@ my_printf_cdecl:
 ;--------------------------------------
 handle_percent:
         inc rsi             ; to the next symbol
+        mov dl, BYTE [rsi]
 
-        cmp BYTE [rsi], 0
+        cmp dl, 0
         je .end
 
-        cmp BYTE [rsi], 's'
+        cmp dl, 's'
         je handle_s
 
+        cmp dl, 'd'
+        je handle_d
+
     .end:
-        ; inc rsi
         dec rbx
         add rbp, 8
 
@@ -154,29 +157,32 @@ handle_d:
         push rdx
         push rax
 
-        lea r11, [num_buf]
-        mov eax, [rbp]
-        mov edi, 10
+        lea r11, [num_buf]          ; r11 = &num_buf
+        mov eax, [rbp]              ; eax = number
+        mov edi, 10                 ; 10 - radix
 
     .num_loop:
+        xor edx, edx                ; edx = 0 (for div)
+
         div edi
-        add dl, '0'
-        mov BYTE [r11], dl
+        add dl, '0'                 ; dl = ascii digit
+        mov BYTE [r11], dl          ; into reversed buffer
         inc r11
 
-        cmp eax, 0
+        cmp eax, 0                  ; until number is 0
         jne .num_loop
 
-    .copy_loop:
+        dec rbx
+    .copy_loop:                     ; copying reversed num_buf to buffer
         dec r11
+        inc rbx
         mov dl, BYTE [r11]
         mov BYTE [rbx], dl
 
         cmp r11, num_buf
         jne .copy_loop
 
-        dec rbx
-        add rbp, 8
+        add rbp, 8                  ; to the next arg
 
         pop rax
         pop rdx
@@ -195,7 +201,7 @@ handle_d:
 ; Return: -
 ; Destr:
 ;--------------------------------------
-my_strncpy
+my_strncpy:
         xor    rcx, rcx
     .copy_loop:
         mov dl, [rdi + rcx]
