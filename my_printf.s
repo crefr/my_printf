@@ -111,6 +111,9 @@ handle_percent:
         cmp dl, 'd'
         je handle_d
 
+        cmp dl, 'u'
+        je handle_u
+
     .end:
         dec rbx
         add rbp, 8
@@ -157,8 +160,45 @@ handle_d:
         push rdx
         push rax
 
+        lea r11, [num_buf]
+        mov eax, [rbp]
+
+        test eax, 0x70000000
+        jz print_unsigned
+
+        mov BYTE [rbx], '-'
+        inc rbx
+
+        neg eax
+
+        jmp print_unsigned
+
+        ret
+;================================================
+
+;================================================
+;--------------------------------------
+; Handles %u specification
+; Entry:
+;   rsi = current addr in fmt (on the u symbol)
+;   rbx = current addr in buffer
+;   rbp = current arg pointer
+;   r11 = num_buf addr
+; Return: -
+; Destr:
+;--------------------------------------
+handle_u:
+        push rdx
+        push rax
+
         lea r11, [num_buf]          ; r11 = &num_buf
         mov eax, [rbp]              ; eax = number
+
+;   !FALLING THROUGH!
+;------------------------------------
+; This function is used by handle_u and handle_d
+;------------------------------------
+print_unsigned:
         mov edi, 10                 ; 10 - radix
 
     .num_loop:
