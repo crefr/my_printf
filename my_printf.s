@@ -123,8 +123,31 @@ handle_percent:
         cmp dl, 'b'
         je handle_b
 
+        cmp dl, 'c'
+        je handle_c
+
     .default:
         mov BYTE [rbx], '%'
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Handles %c specification
+; Entry:
+;   rsi = current addr in fmt (on the s symbol)
+;   rbx = current addr in buffer
+;   rbp = current arg pointer
+; Return:
+; Destr:
+;--------------------------------------
+handle_c:
+        mov al, BYTE [rbp]
+        mov BYTE [rbx], al
+
+        add rbp, 8
 
         ret
 ;================================================
