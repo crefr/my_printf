@@ -1,0 +1,255 @@
+BUFFER_LEN equ 128
+
+; my_printf(const char * fmt, ...)
+global my_printf
+
+section .text
+
+;================================================
+;--------------------------------------
+; Trampolin for my_printf_cdecl
+; receives args in System V ABI format
+; then calls my_printf_cdecl;
+; Destr: rax
+;--------------------------------------
+my_printf:
+        pop rax
+
+        push r9
+        push r8
+        push rcx
+        push rdx
+        push rsi
+        push rdi
+
+        push rax
+
+        call my_printf_cdecl
+        pop rdi
+        add rsp, 6*8
+        jmp rdi
+;================================================
+
+
+;================================================
+;--------------------------------------
+; my_printf_cdecl(const char * fmt, ...)
+; My realisation of printf
+; Entry:
+;   args in cdecl format
+; Return:
+;   num of symbols printed
+; Destr: rax,
+;--------------------------------------
+my_printf_cdecl:
+        push rbp
+        lea rbp, 24[rsp]
+
+        push rbx
+
+        lea rbx, [buffer]
+        dec rbx                 ; buf_ptr = &buffer - 1
+
+        mov rsi, [rbp]
+        dec rsi                 ; fmt_ptr = &fmt - 1
+
+        add rbp, 8              ; to the next arg
+
+    .main_loop:
+        inc rsi                 ; fmt_ptr++
+        inc rbx                 ; buf_ptr++
+
+        cmp BYTE [rsi], '%'     ; if (*fmt_ptr == '%')
+        je .percent
+
+        mov al, BYTE [rsi]
+        mov BYTE [rbx], al
+        jmp .loop_end
+
+    .percent:
+        call handle_percent
+
+    .loop_end:
+        cmp BYTE [rsi], 0        ; while (*fmt_ptr != 0)
+        jne .main_loop
+
+        lea rsi, [buffer]
+
+        mov rdx, rbx
+        sub rdx, rsi
+
+        call write_buffer
+
+        mov rax, rdx            ; rax = strlen(fmt)
+
+        pop rbx
+        pop rbp
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Handles % symbol in fmt string
+; Entry:
+;   rsi = current addr in fmt (on the % symbol)
+;   rbx = current addr in buffer
+;   rbp = current arg pointer
+; Return:
+; Destr: rdx rax rsi rbx rbp
+;--------------------------------------
+handle_percent:
+        inc rsi             ; to the next symbol
+
+        cmp BYTE [rsi], 0
+        je .end
+
+        cmp BYTE [rsi], 's'
+        je handle_s
+
+    .end:
+        ; inc rsi
+        dec rbx
+        add rbp, 8
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Handles %s specification
+; Entry:
+;   rsi = current addr in fmt (on the s symbol)
+;   rbx = current addr in buffer
+;   rbp = current arg pointer
+; Return:
+; Destr:
+;--------------------------------------
+handle_s:
+        mov rdi, [rbp]
+        call my_strlen      ; rax = strlen(arg_str)
+
+        call my_strncpy
+        add rbx, rax        ; buf_ptr += strlen(arg_str)
+
+        dec rbx
+        add rbp, 8
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Handles %d specification
+; Entry:
+;   rsi = current addr in fmt (on the d symbol)
+;   rbx = current addr in buffer
+;   rbp = current arg pointer
+; Return: -
+; Destr:
+;--------------------------------------
+handle_d:
+        push rdx
+        push rax
+
+        lea r11, [num_buf]
+        mov eax, [rbp]
+        mov edi, 10
+
+    .num_loop:
+        div edi
+        add dl, '0'
+        mov BYTE [r11], dl
+        inc r11
+
+        cmp eax, 0
+        jne .num_loop
+
+    .copy_loop:
+        dec r11
+        mov dl, BYTE [r11]
+        mov BYTE [rbx], dl
+
+        cmp r11, num_buf
+        jne .copy_loop
+
+        dec rbx
+        add rbp, 8
+
+        pop rax
+        pop rdx
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; My realisation of strncpy
+; Entry:
+;   rbx = dest addr
+;   rdi = src addr
+;   rax = num of chars to copy
+; Return: -
+; Destr:
+;--------------------------------------
+my_strncpy
+        xor    rcx, rcx
+    .copy_loop:
+        mov dl, [rdi + rcx]
+        mov [rbx + rcx], dl
+
+        inc rcx
+        cmp rcx, rax
+        jne .copy_loop
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Makes syscall 0x01 (write) to print buffer
+; Entry:
+;   rsi = buf_addr
+;   rdx = symbols to write
+; Return: -
+; Destr: rax, rdi
+;--------------------------------------
+write_buffer:
+        mov rax, 0x01       ; write(rdi, rsi, rdx)
+        mov rdi, 1          ; stdout
+        syscall
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; My realisation of strlen
+; Entry:
+;   rdi = str addr (ending with \0)
+; Return:
+;   rax = num of symbols
+; Destr: rax
+;--------------------------------------
+my_strlen:
+        mov rax, rdi
+        dec rax
+    .str_loop:
+        inc rax
+
+        cmp BYTE [rax], 0
+        jne .str_loop
+
+        sub rax, rdi
+
+        ret
+;================================================
+
+section .bss
+    buffer      resb BUFFER_LEN
+    num_buf     resb 32
