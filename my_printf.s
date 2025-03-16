@@ -103,7 +103,7 @@ handle_percent:
         mov dl, BYTE [rsi]
 
         cmp dl, 0
-        je .end
+        je .default
 
         cmp dl, 's'
         je handle_s
@@ -114,9 +114,17 @@ handle_percent:
         cmp dl, 'u'
         je handle_u
 
-    .end:
-        dec rbx
-        add rbp, 8
+        cmp dl, 'o'
+        je handle_o
+
+        cmp dl, 'x'
+        je handle_x
+
+        cmp dl, 'b'
+        je handle_b
+
+    .default:
+        mov BYTE [rbx], '%'
 
         ret
 ;================================================
@@ -141,6 +149,71 @@ handle_s:
 
         dec rbx
         add rbp, 8
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Set of functions that handles %b, %o and %x
+; Entry:
+;   rsi = current addr in fmt (on the b, o or x symbol)
+;   rbx = current addr in buffer
+;   rbp = current arg pointer
+; Return: -
+; Destr:
+;--------------------------------------
+handle_b:
+        mov cl, 1
+        jmp render_b_o_x
+
+handle_o:
+        mov cl, 3
+        jmp render_b_o_x
+
+handle_x:
+        mov cl, 4
+       ;jmp render_b_o_x
+
+render_b_o_x:
+        push rax
+        push rdx
+
+        lea r11, [num_buf]
+        mov eax, [rbp]
+
+        mov ch, -1
+        shl ch, cl
+        not ch                  ; dl = b0...01...1, cl = num of 1
+
+    .print_loop:
+        mov dl, ch
+        and dl, al
+
+        add dl, '0'
+
+    ;--- for cl = 4 (hexadecimal) ---
+        cmp dl, '9'
+        jbe .not_letter
+        add dl, 'a' - '0' - 10
+    ;--------------------------------
+
+    .not_letter:
+        mov BYTE [r11], dl
+        inc r11
+
+        shr eax, cl
+
+        test eax, eax
+        jnz .print_loop
+
+        call from_num_to_buf
+
+        add rbp, 8
+
+        pop rdx
+        pop rax
 
         ret
 ;================================================
@@ -212,6 +285,27 @@ print_unsigned:
         cmp eax, 0                  ; until number is 0
         jne .num_loop
 
+        call from_num_to_buf
+
+        add rbp, 8                  ; to the next arg
+
+        pop rax
+        pop rdx
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
+; Copies data from reversed num_buf to buffer
+; Entry:
+;   r11 = current addr num_buf
+;   rbx = current arg pointer
+; Return: -
+; Destr:
+;--------------------------------------
+from_num_to_buf:
         dec rbx
     .copy_loop:                     ; copying reversed num_buf to buffer
         dec r11
@@ -221,11 +315,6 @@ print_unsigned:
 
         cmp r11, num_buf
         jne .copy_loop
-
-        add rbp, 8                  ; to the next arg
-
-        pop rax
-        pop rdx
 
         ret
 ;================================================

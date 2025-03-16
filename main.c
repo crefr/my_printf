@@ -7,7 +7,7 @@ int my_printf(const char *fmt, ...);
 int main()
 {
     printf("<ret value: %d>\n",
-    my_printf("value of %s is %u\n", "bebra", -228));
+    my_printf("%b", 0b1101));
 
     return 0;
 }
