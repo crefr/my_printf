@@ -46,20 +46,25 @@ my_printf_cdecl:
         lea rbx, [buffer]
         dec rbx                 ; buf_ptr = &buffer - 1
 
-        mov rsi, [rbp]
-        dec rsi                 ; fmt_ptr = &fmt - 1
+        mov r8, [rbp]
+        dec r8                 ; fmt_ptr = &fmt - 1
 
         add rbp, 8              ; to the next arg (after fmts)
 
     ;--- scanning loop ---
     .main_loop:
-        inc rsi                 ; fmt_ptr++
+        inc r8                  ; fmt_ptr++
         inc rbx                 ; buf_ptr++
 
-        cmp BYTE [rsi], '%'     ; if (*fmt_ptr == '%')
+        cmp BYTE [r8], '%'      ; if (*fmt_ptr == '%')
         je .percent
 
-        mov al, BYTE [rsi]
+        cmp rbx, buffer + BUFFER_LEN    ; checking for overflow
+        jb .do_not_flush
+        call flush_buffer
+    .do_not_flush:
+
+        mov al, BYTE [r8]
         mov BYTE [rbx], al
         jmp .loop_end
 
@@ -67,7 +72,7 @@ my_printf_cdecl:
         call handle_percent
 
     .loop_end:
-        cmp BYTE [rsi], 0        ; while (*fmt_ptr != 0)
+        cmp BYTE [r8], 0        ; while (*fmt_ptr != 0)
         jne .main_loop
     ;---------------------
 
@@ -93,17 +98,17 @@ my_printf_cdecl:
 ;--------------------------------------
 ; Handles % symbol in fmt string
 ; Entry:
-;   rsi = current addr in fmt (on the % symbol)
+;   r8 = current addr in fmt (on the % symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return:
-; Destr: rdx rax rsi rbx rbp
+; Destr: rdx rax r8 rbx rbp
 ;--------------------------------------
 handle_percent:
         xor rdx, rdx
 
-        inc rsi                 ; to the next symbol
-        mov dl, BYTE [rsi]
+        inc r8                 ; to the next symbol
+        mov dl, BYTE [r8]
 
         sub dl, 'b'
 
@@ -124,7 +129,7 @@ handle_percent:
 ;--------------------------------------
 ; Handles %c specification
 ; Entry:
-;   rsi = current addr in fmt (on the s symbol)
+;   r8 = current addr in fmt (on the s symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return:
@@ -145,22 +150,42 @@ handle_c:
 ;--------------------------------------
 ; Handles %s specification
 ; Entry:
-;   rsi = current addr in fmt (on the s symbol)
+;   r8 = current addr in fmt (on the s symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return:
 ;   rbx = new addr in buffer
 ;   rbp = next arg pointer
-; Destr: rdi rbx rbp
+; Destr: rdi rbx rbp rsi rdx rax
 ;--------------------------------------
 handle_s:
         mov rdi, [rbp]
         call my_strlen      ; rax = strlen(arg_str)
 
+        cmp rax, BUFFER_LEN
+        ja .too_long_str
+
+        ; cmp rax,
+
         call my_strncpy
         add rbx, rax        ; buf_ptr += strlen(arg_str)
 
         dec rbx
+        add rbp, 8
+
+        ret
+
+    .too_long_str:          ; if too long that flushing buffer and syscall
+        push rax
+        call flush_buffer
+        pop rax
+
+        dec rbx
+
+        mov rsi, [rbp]
+        mov rdx, rax
+        call write_buffer
+
         add rbp, 8
 
         ret
@@ -171,7 +196,7 @@ handle_s:
 ;--------------------------------------
 ; Set of functions that handles %b, %o and %x
 ; Entry:
-;   rsi = current addr in fmt (on the b, o or x symbol)
+;   r8 = current addr in fmt (on the b, o or x symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return: -
@@ -236,11 +261,12 @@ print_b_o_x:
 ;--------------------------------------
 ; Handles %d specification
 ; Entry:
-;   rsi = current addr in fmt (on the d symbol)
+;   r8 = current addr in fmt (on the d symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
-; Return: -
-; Destr:
+; Return:
+;   rbx = new addr in buffer
+; Destr: r11, rbx, rdi
 ;--------------------------------------
 handle_d:
         push rdx
@@ -265,12 +291,12 @@ handle_d:
 ;--------------------------------------
 ; Handles %u specification
 ; Entry:
-;   rsi = current addr in fmt (on the u symbol)
+;   r8 = current addr in fmt (on the u symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ;   r11 = num_buf addr
 ; Return: -
-; Destr:
+; Destr: r11, rbx, rdi
 ;--------------------------------------
 handle_u:
         push rdx
@@ -314,8 +340,10 @@ print_unsigned:
 ; Entry:
 ;   r11 = current addr num_buf
 ;   rbx = current arg pointer
-; Return: -
-; Destr:
+; Return:
+;   rbx = new addr in buffer
+;   r11 = new addr in num_buf
+; Destr: rbx, r11, rdx
 ;--------------------------------------
 from_num_to_buf:
         dec rbx
@@ -340,7 +368,7 @@ from_num_to_buf:
 ;   rdi = src addr
 ;   rax = num of chars to copy
 ; Return: -
-; Destr:
+; Destr: rcx, rdx
 ;--------------------------------------
 my_strncpy:
         xor    rcx, rcx
@@ -361,15 +389,18 @@ my_strncpy:
 ; Flushes buffer from .bss
 ; Entry:
 ;   rbx = current pos in buffer
-; Return: -
-; Destr: rax, rdi, rsi, rdx
+; Return:
+;   rbx = start pos in buffer
+; Destr: rax, rdi, r8, rdx
 ;--------------------------------------
 flush_buffer:
         mov rsi, buffer
         mov rdx, rbx
         sub rdx, buffer
 
-        mov rax, 0x01       ; write(rdi, rsi, rdx)
+        mov rbx, rsi        ; to the start
+
+        mov rax, 0x01       ; write(rdi, r8, rdx)
         mov rdi, 1          ; stdout
         syscall
 
@@ -432,11 +463,11 @@ JMP_TABLE:
     dq handle_d                 ; 'd'
 
     ; e f g h i j k l m n
-    dq 10 dup handle_percent.default
+    dq 'o' - 'd' - 1 dup handle_percent.default
     dq handle_o                 ; 'o'
 
     ; p q r
-    dq 3 dup handle_percent.default
+    dq 's' - 'o' - 1 dup handle_percent.default
     dq handle_s                 ; 's'
 
     ; t
@@ -444,7 +475,7 @@ JMP_TABLE:
     dq handle_u
 
     ; v w
-    dq 2 dup handle_percent.default
+    dq 'x' - 'u' - 1 dup handle_percent.default
     dq handle_x
 
     ;y z are out of range
