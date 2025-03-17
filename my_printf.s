@@ -10,10 +10,9 @@ section .text
 ; Trampolin for my_printf_cdecl
 ; receives args in System V ABI format
 ; then calls my_printf_cdecl;
-; Destr: rax
 ;--------------------------------------
 my_printf:
-        pop rax
+        pop rax             ; caller addr
 
         push r9
         push r8
@@ -22,12 +21,9 @@ my_printf:
         push rsi
         push rdi
 
-        push rax
+        push rax            ; caller addr
 
-        call my_printf_cdecl
-        pop rdi
-        add rsp, 6*8
-        jmp rdi
+        jmp my_printf_cdecl
 ;================================================
 
 
@@ -42,10 +38,10 @@ my_printf:
 ; Destr: rax,
 ;--------------------------------------
 my_printf_cdecl:
-        push rbp
-        lea rbp, 24[rsp]
+        push rbp                ; saving rbp for caller
+        lea rbp, 16[rsp]        ; rbp is on the 1st arg
 
-        push rbx
+        push rbx                ; saving rbx for caller
 
         lea rbx, [buffer]
         dec rbx                 ; buf_ptr = &buffer - 1
@@ -53,8 +49,9 @@ my_printf_cdecl:
         mov rsi, [rbp]
         dec rsi                 ; fmt_ptr = &fmt - 1
 
-        add rbp, 8              ; to the next arg
+        add rbp, 8              ; to the next arg (after fmts)
 
+    ;--- scanning loop ---
     .main_loop:
         inc rsi                 ; fmt_ptr++
         inc rbx                 ; buf_ptr++
@@ -72,19 +69,23 @@ my_printf_cdecl:
     .loop_end:
         cmp BYTE [rsi], 0        ; while (*fmt_ptr != 0)
         jne .main_loop
+    ;---------------------
 
-        lea rsi, [buffer]
+        call flush_buffer
 
-        mov rdx, rbx
-        sub rdx, rsi
+        mov rax, rbx
+        sub rbx, buffer
 
-        call write_buffer
+        mov rax, rdx            ; returning rax = num of symbols printed
 
-        mov rax, rdx            ; rax = strlen(fmt)
+        pop rbx                 ; restore rbx for caller
+        pop rbp                 ; restore rbp for caller
 
-        pop rbx
-        pop rbp
-        ret
+    ;--- restoring stack and returning ---
+        pop rdi                 ; caller addr
+        add rsp, 6*8            ; restoring stack
+        jmp rdi                 ; ret
+    ;-------------------------------------
 ;================================================
 
 
@@ -101,15 +102,16 @@ my_printf_cdecl:
 handle_percent:
         xor rdx, rdx
 
-        inc rsi             ; to the next symbol
+        inc rsi                 ; to the next symbol
         mov dl, BYTE [rsi]
 
-        sub dl, 'a'
+        sub dl, 'b'
 
-        cmp dl, 'u'         ; if (symbol > 'u' || symbol < 'a')
-        ja .default         ; then default
+        cmp dl, 'u'             ; if (symbol > 'u' || symbol < 'a')
+        ja .default             ; then default
 
-        jmp JMP_TABLE[rdx*8]
+        jmp JMP_TABLE[rdx*8]    ; switch(symbol)
+        ; jump table is in .rodata at the end of file
 
     .default:
         mov BYTE [rbx], '%'
@@ -126,7 +128,8 @@ handle_percent:
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return:
-; Destr:
+;   rbp is on the next arg
+; Destr: al rbp
 ;--------------------------------------
 handle_c:
         mov al, BYTE [rbp]
@@ -146,7 +149,9 @@ handle_c:
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return:
-; Destr:
+;   rbx = new addr in buffer
+;   rbp = next arg pointer
+; Destr: rdi rbx rbp
 ;--------------------------------------
 handle_s:
         mov rdi, [rbp]
@@ -174,17 +179,17 @@ handle_s:
 ;--------------------------------------
 handle_b:
         mov cl, 1
-        jmp render_b_o_x
+        jmp print_b_o_x
 
 handle_o:
         mov cl, 3
-        jmp render_b_o_x
+        jmp print_b_o_x
 
 handle_x:
         mov cl, 4
-       ;jmp render_b_o_x
+       ;jmp print_b_o_x
 
-render_b_o_x:
+print_b_o_x:
         push rax
         push rdx
 
@@ -253,9 +258,8 @@ handle_d:
         neg eax
 
         jmp print_unsigned
-
-        ret
 ;================================================
+
 
 ;================================================
 ;--------------------------------------
@@ -354,12 +358,33 @@ my_strncpy:
 
 ;================================================
 ;--------------------------------------
+; Flushes buffer from .bss
+; Entry:
+;   rbx = current pos in buffer
+; Return: -
+; Destr: rax, rdi, rsi, rdx
+;--------------------------------------
+flush_buffer:
+        mov rsi, buffer
+        mov rdx, rbx
+        sub rdx, buffer
+
+        mov rax, 0x01       ; write(rdi, rsi, rdx)
+        mov rdi, 1          ; stdout
+        syscall
+
+        ret
+;================================================
+
+
+;================================================
+;--------------------------------------
 ; Makes syscall 0x01 (write) to print buffer
 ; Entry:
 ;   rsi = buf_addr
 ;   rdx = symbols to write
 ; Return: -
-; Destr: rax, rdi
+; Destr: rax, rdi, rsi, rdx
 ;--------------------------------------
 write_buffer:
         mov rax, 0x01       ; write(rdi, rsi, rdx)
@@ -395,30 +420,35 @@ my_strlen:
 
 
 section .rodata
-    JMP_TABLE:
-        align 8
+;==================================
+; Jump table for handle_percent function
+; range is 'b' to 'x'
+;==================================
+JMP_TABLE:
+    align 8
 
-        dq handle_percent.default   ; 'a'
-        dq handle_b                 ; 'b'
-        dq handle_c                 ; 'c'
-        dq handle_d                 ; 'd'
+    dq handle_b                 ; 'b'
+    dq handle_c                 ; 'c'
+    dq handle_d                 ; 'd'
 
-        ; e f g h i j k l m n
-        dq 10 dup handle_percent.default
+    ; e f g h i j k l m n
+    dq 10 dup handle_percent.default
+    dq handle_o                 ; 'o'
 
-        dq handle_o                 ; 'o'
+    ; p q r
+    dq 3 dup handle_percent.default
+    dq handle_s                 ; 's'
 
-        ; p q r
-        dq 3 dup handle_percent.default
+    ; t
+    dq handle_percent.default
+    dq handle_u
 
-        dq handle_s                 ; 's'
+    ; v w
+    dq 2 dup handle_percent.default
+    dq handle_x
 
-        ; t
-        dq handle_percent.default
-
-        dq handle_u
-
-        ; v w x y z are out of range
+    ;y z are out of range
+;==================================
 
 
 section .bss
