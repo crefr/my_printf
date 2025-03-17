@@ -7,7 +7,7 @@ int my_printf(const char *fmt, ...);
 int main()
 {
     printf("<ret value: %d>\n",
-    my_printf("%c", 65));
+    my_printf("%s %d %c %u", "aboba\n", -100, 'b', 52));
 
     return 0;
 }

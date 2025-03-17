@@ -99,32 +99,17 @@ my_printf_cdecl:
 ; Destr: rdx rax rsi rbx rbp
 ;--------------------------------------
 handle_percent:
+        xor rdx, rdx
+
         inc rsi             ; to the next symbol
         mov dl, BYTE [rsi]
 
-        cmp dl, 0
-        je .default
+        sub dl, 'a'
 
-        cmp dl, 's'
-        je handle_s
+        cmp dl, 'u'         ; if (symbol > 'u' || symbol < 'a')
+        ja .default         ; then default
 
-        cmp dl, 'd'
-        je handle_d
-
-        cmp dl, 'u'
-        je handle_u
-
-        cmp dl, 'o'
-        je handle_o
-
-        cmp dl, 'x'
-        je handle_x
-
-        cmp dl, 'b'
-        je handle_b
-
-        cmp dl, 'c'
-        je handle_c
+        jmp JMP_TABLE[rdx*8]
 
     .default:
         mov BYTE [rbx], '%'
@@ -407,6 +392,34 @@ my_strlen:
 
         ret
 ;================================================
+
+
+section .rodata
+    JMP_TABLE:
+        align 8
+
+        dq handle_percent.default   ; 'a'
+        dq handle_b                 ; 'b'
+        dq handle_c                 ; 'c'
+        dq handle_d                 ; 'd'
+
+        ; e f g h i j k l m n
+        dq 10 dup handle_percent.default
+
+        dq handle_o                 ; 'o'
+
+        ; p q r
+        dq 3 dup handle_percent.default
+
+        dq handle_s                 ; 's'
+
+        ; t
+        dq handle_percent.default
+
+        dq handle_u
+
+        ; v w x y z are out of range
+
 
 section .bss
     buffer      resb BUFFER_LEN
