@@ -1,4 +1,4 @@
-BUFFER_LEN equ 128
+BUFFER_LEN equ 32
 
 ; my_printf(const char * fmt, ...)
 global my_printf
@@ -42,12 +42,15 @@ my_printf_cdecl:
         lea rbp, 16[rsp]        ; rbp is on the 1st arg
 
         push rbx                ; saving rbx for caller
+        push r12
+        push r13
+        xor r13, r13
 
         lea rbx, [buffer]
         dec rbx                 ; buf_ptr = &buffer - 1
 
         mov r8, [rbp]
-        dec r8                 ; fmt_ptr = &fmt - 1
+        dec r8                  ; fmt_ptr = &fmt - 1
 
         add rbp, 8              ; to the next arg (after fmts)
 
@@ -81,8 +84,10 @@ my_printf_cdecl:
         mov rax, rbx
         sub rbx, buffer
 
-        mov rax, rdx            ; returning rax = num of symbols printed
+        mov rax, r13            ; returning rax = num of symbols printed
 
+        pop r13
+        pop r12
         pop rbx                 ; restore rbx for caller
         pop rbp                 ; restore rbp for caller
 
@@ -156,16 +161,29 @@ handle_c:
 ; Return:
 ;   rbx = new addr in buffer
 ;   rbp = next arg pointer
-; Destr: rdi rbx rbp rsi rdx rax
+; Destr: rdi rbx rbp rsi rdx rax rcx r12
 ;--------------------------------------
 handle_s:
         mov rdi, [rbp]
         call my_strlen      ; rax = strlen(arg_str)
 
+    ; if (strlen > BUFFER_LEN)
         cmp rax, BUFFER_LEN
         ja .too_long_str
 
-        ; cmp rax,
+    ; --- overflow check ---
+        lea rcx, [rbx + rax]    ; rcx = new_pos in buffer (hypothetically)
+
+        cmp rcx, buffer + BUFFER_LEN
+        jb .not_flushing
+
+        push rax
+        push rdi
+        call flush_buffer
+        pop rdi           ; restoring rdi
+        pop rax
+    .not_flushing:
+    ; --- overflow check ---
 
         call my_strncpy
         add rbx, rax        ; buf_ptr += strlen(arg_str)
@@ -175,7 +193,8 @@ handle_s:
 
         ret
 
-    .too_long_str:          ; if too long that flushing buffer and syscall
+    ; if too long then flushing buffer and syscall
+    .too_long_str:
         push rax
         call flush_buffer
         pop rax
@@ -184,6 +203,9 @@ handle_s:
 
         mov rsi, [rbp]
         mov rdx, rax
+
+        add r13, rax
+
         call write_buffer
 
         add rbp, 8
@@ -199,8 +221,9 @@ handle_s:
 ;   r8 = current addr in fmt (on the b, o or x symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
-; Return: -
-; Destr:
+; Return:
+;   rbp - on the next arg
+; Destr: rcx, r9, r11, rbp
 ;--------------------------------------
 handle_b:
         mov cl, 1
@@ -217,6 +240,20 @@ handle_x:
 print_b_o_x:
         push rax
         push rdx
+
+    ; --- overflow check ---
+        xchg rcx, r9                    ; saving rcx in r9
+
+        mov rax, rbx
+        cmp rax, BUFFER_LEN - 32        ; 32 is max len of %b
+        jb .not_flushing
+
+        call flush_buffer
+    .not_flushing:
+
+        xchg rcx, r9
+    ; --- overflow check ---
+        xor dl, dl
 
         lea r11, [num_buf]
         mov eax, [rbp]
@@ -272,6 +309,14 @@ handle_d:
         push rdx
         push rax
 
+    ; --- overflow check ---
+        cmp rbx, BUFFER_LEN - 11        ; 11 is len of -INT_MAX
+        jb .not_flushing
+
+        call flush_buffer
+    .not_flushing:
+    ; --- overflow check ---
+
         lea r11, [num_buf]
         mov eax, [rbp]
 
@@ -301,6 +346,14 @@ handle_d:
 handle_u:
         push rdx
         push rax
+
+    ; --- overflow check ---
+        cmp rbx, BUFFER_LEN - 10        ; 10 is len of UINT_MAX
+        jb .not_flushing
+
+        call flush_buffer
+    .not_flushing:
+    ; --- overflow check ---
 
         lea r11, [num_buf]          ; r11 = &num_buf
         mov eax, [rbp]              ; eax = number
@@ -389,14 +442,19 @@ my_strncpy:
 ; Flushes buffer from .bss
 ; Entry:
 ;   rbx = current pos in buffer
+;   r13 = num of printed chars
 ; Return:
+;   r13 = new num of printed chars
 ;   rbx = start pos in buffer
 ; Destr: rax, rdi, r8, rdx
 ;--------------------------------------
 flush_buffer:
         mov rsi, buffer
+
         mov rdx, rbx
         sub rdx, buffer
+
+        add r13, rdx
 
         mov rbx, rsi        ; to the start
 
