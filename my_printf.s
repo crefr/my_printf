@@ -1,4 +1,6 @@
-BUFFER_LEN equ 64
+BUFFER_LEN equ 128
+
+extern puts
 
 ; my_printf(const char * fmt, ...)
 global my_printf
@@ -39,7 +41,12 @@ my_printf:
 ;--------------------------------------
 my_printf_cdecl:
         push rbp                ; saving rbp for caller
-        lea rbp, 16[rsp]        ; rbp is on the 1st arg
+        lea rbp, [rsp + 16]        ; rbp is on the 1st arg
+
+    ; calling glibc function puts
+        mov rdi, HELLO_STR
+        call puts
+    ; ----------------------
 
     ; saving other registers for caller
         push rbx
@@ -538,13 +545,18 @@ my_strlen:
 
 
 section .rodata
+HELLO_STR:
+    db "=====================================================", 0x0A
+    db "# Вы используете неактивированную версию my_printf! #", 0x0A
+    db "# Занесите бутерброд в 312!                         #", 0x0A
+    db "=====================================================", 0x0A, 0
+
 ;==================================
 ; Jump table for handle_percent function
 ; range is 'b' to 'x'
 ;==================================
-JMP_TABLE:
     align 8
-
+JMP_TABLE:
     dq handle_b                 ; 'b'
     dq handle_c                 ; 'c'
     dq handle_d                 ; 'd'
