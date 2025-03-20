@@ -41,12 +41,22 @@ my_printf_cdecl:
         push rbp                ; saving rbp for caller
         lea rbp, 16[rsp]        ; rbp is on the 1st arg
 
-        push rbx                ; saving rbx for caller
+    ; saving other registers for caller
+        push rbx
         push r12
         push r13
-        xor r13, r13
+        push r14
+        push r15
+    ;----------------------------------
 
-        lea rbx, [buffer]
+    ; allocating buffer on stack
+        sub rsp, BUFFER_LEN
+        mov r14, rsp
+    ;---------------------------
+
+        xor r13, r13            ; num of symbols printed = 0
+
+        mov rbx, r14
         dec rbx                 ; buf_ptr = &buffer - 1
 
         mov r8, [rbp]
@@ -62,7 +72,10 @@ my_printf_cdecl:
         cmp BYTE [r8], '%'      ; if (*fmt_ptr == '%')
         je .percent
 
-        cmp rbx, buffer + BUFFER_LEN    ; checking for overflow
+        mov r15, rbx
+        sub r15, r14            ; r15 = buf_ptr - buffer
+
+        cmp r15, BUFFER_LEN     ; checking for overflow
         jb .do_not_flush
         call flush_buffer
     .do_not_flush:
@@ -81,15 +94,18 @@ my_printf_cdecl:
 
         call flush_buffer
 
-        mov rax, rbx
-        sub rbx, buffer
-
         mov rax, r13            ; returning rax = num of symbols printed
 
+        add rsp, BUFFER_LEN     ; deallocating buffer
+
+    ; restoring registers for caller
+        pop r15
+        pop r14
         pop r13
         pop r12
-        pop rbx                 ; restore rbx for caller
-        pop rbp                 ; restore rbp for caller
+        pop rbx
+        pop rbp
+    ;-------------------------------
 
     ;--- restoring stack and returning ---
         pop rdi                 ; caller addr
@@ -173,8 +189,9 @@ handle_s:
 
     ; --- overflow check ---
         lea rcx, [rbx + rax]    ; rcx = new_pos in buffer (hypothetically)
+        sub rcx, r14            ; rcx = index in buffer
 
-        cmp rcx, buffer + BUFFER_LEN
+        cmp rcx, BUFFER_LEN
         jb .not_flushing
 
         push rax
@@ -244,23 +261,32 @@ print_b_o_x:
     ; --- overflow check ---
         xchg rcx, r9                    ; saving rcx in r9
 
-        mov rax, rbx
-        cmp rax, BUFFER_LEN - 32        ; 32 is max len of %b
+        mov r15, rbx
+        sub r15, r14
+
+        cmp r15, BUFFER_LEN - 32        ; 32 is max len of %b
         jb .not_flushing
 
         call flush_buffer
     .not_flushing:
 
         xchg rcx, r9
-    ; --- overflow check ---
+    ; ----------------------
+
         xor dl, dl
 
-        lea r11, [num_buf]
+    ; allocating buffer for number in stack
+        sub rsp, 32             ; 32 is max len of %b specification
+        mov rsi, rsp            ; r11 = &num_buf
+    ; -------------------------------------
+
+        mov r11, rsi            ; r11 = &num_buf
+
         mov eax, [rbp]
 
         mov ch, -1
         shl ch, cl
-        not ch                  ; dl = b0...01...1, cl = num of 1
+        not ch                  ; ch = b0...01...1, cl = num of 1
 
     .print_loop:
         mov dl, ch
@@ -287,6 +313,8 @@ print_b_o_x:
 
         add rbp, 8
 
+        add rsp, 32                 ; deallocating number buffer
+
         pop rdx
         pop rax
 
@@ -301,6 +329,7 @@ print_b_o_x:
 ;   r8 = current addr in fmt (on the d symbol)
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
+;   r14 = buffer start addr
 ; Return:
 ;   rbx = new addr in buffer
 ; Destr: r11, rbx, rdi
@@ -310,14 +339,16 @@ handle_d:
         push rax
 
     ; --- overflow check ---
-        cmp rbx, BUFFER_LEN - 11        ; 11 is len of -INT_MAX
+        mov r15, rbx
+        sub r15, r14
+
+        cmp r15, BUFFER_LEN - 11        ; 11 is len of -INT_MAX
         jb .not_flushing
 
         call flush_buffer
     .not_flushing:
     ; --- overflow check ---
 
-        lea r11, [num_buf]
         mov eax, [rbp]
 
         test eax, 0x70000000
@@ -348,14 +379,16 @@ handle_u:
         push rax
 
     ; --- overflow check ---
-        cmp rbx, BUFFER_LEN - 10        ; 10 is len of UINT_MAX
+        mov r15, rbx
+        sub r15, r14
+
+        cmp r15, BUFFER_LEN - 10        ; 10 is len of UINT_MAX
         jb .not_flushing
 
         call flush_buffer
     .not_flushing:
     ; --- overflow check ---
 
-        lea r11, [num_buf]          ; r11 = &num_buf
         mov eax, [rbp]              ; eax = number
 
 ;   !FALLING THROUGH!
@@ -363,6 +396,12 @@ handle_u:
 ; This function is used by handle_u and handle_d
 ;------------------------------------
 print_unsigned:
+    ; allocating buffer for number in stack
+        sub rsp, 32             ; 32 is max len of %b specification
+        mov rsi, rsp            ; rsi = &num_buf
+    ; --------------------------------------
+        mov r11, rsi            ; r11 = &num_buf
+
         mov edi, 10                 ; 10 - radix
 
     .num_loop:
@@ -380,6 +419,8 @@ print_unsigned:
 
         add rbp, 8                  ; to the next arg
 
+        add rsp, 32                 ; deallocating number buffer
+
         pop rax
         pop rdx
 
@@ -391,7 +432,7 @@ print_unsigned:
 ;--------------------------------------
 ; Copies data from reversed num_buf to buffer
 ; Entry:
-;   r11 = current addr num_buf
+;   r11 = current addr in num_buf
 ;   rbx = current arg pointer
 ; Return:
 ;   rbx = new addr in buffer
@@ -406,7 +447,7 @@ from_num_to_buf:
         mov dl, BYTE [r11]
         mov BYTE [rbx], dl
 
-        cmp r11, num_buf
+        cmp r11, rsi
         jne .copy_loop
 
         ret
@@ -449,10 +490,10 @@ my_strncpy:
 ; Destr: rax, rdi, r8, rdx
 ;--------------------------------------
 flush_buffer:
-        mov rsi, buffer
+        mov rsi, r14
 
         mov rdx, rbx
-        sub rdx, buffer
+        sub rdx, r14
 
         add r13, rdx
 
@@ -536,10 +577,5 @@ JMP_TABLE:
     dq 'x' - 'u' - 1 dup handle_percent.default
     dq handle_x
 
-    ;y z are out of range
+    ; y z are out of range
 ;==================================
-
-
-section .bss
-    buffer      resb BUFFER_LEN
-    num_buf     resb 32
