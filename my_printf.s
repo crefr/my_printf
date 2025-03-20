@@ -280,7 +280,7 @@ print_b_o_x:
         mov rsi, rsp            ; r11 = &num_buf
     ; -------------------------------------
 
-        mov r11, rsi            ; r11 = &num_buf
+        xor r11, r11            ; r11 = num_buf_index = 0
 
         mov eax, [rbp]
 
@@ -301,7 +301,7 @@ print_b_o_x:
     ;--------------------------------
 
     .not_letter:
-        mov BYTE [r11], dl
+        mov BYTE [rsi + r11], dl
         inc r11
 
         shr eax, cl
@@ -400,7 +400,7 @@ print_unsigned:
         sub rsp, 32             ; 32 is max len of %b specification
         mov rsi, rsp            ; rsi = &num_buf
     ; --------------------------------------
-        mov r11, rsi            ; r11 = &num_buf
+        xor r11, r11            ; r11 = index_in_num_buf = 0
 
         mov edi, 10                 ; 10 - radix
 
@@ -409,7 +409,7 @@ print_unsigned:
 
         div edi
         add dl, '0'                 ; dl = ascii digit
-        mov BYTE [r11], dl          ; into reversed buffer
+        mov BYTE [rsi + r11], dl          ; into reversed buffer
         inc r11
 
         cmp eax, 0                  ; until number is 0
@@ -432,7 +432,8 @@ print_unsigned:
 ;--------------------------------------
 ; Copies data from reversed num_buf to buffer
 ; Entry:
-;   r11 = current addr in num_buf
+;   rsi = addr of num_buf
+;   r11 = index in num_buf
 ;   rbx = current arg pointer
 ; Return:
 ;   rbx = new addr in buffer
@@ -444,10 +445,10 @@ from_num_to_buf:
     .copy_loop:                     ; copying reversed num_buf to buffer
         dec r11
         inc rbx
-        mov dl, BYTE [r11]
+        mov dl, BYTE [rsi + r11]
         mov BYTE [rbx], dl
 
-        cmp r11, rsi
+        cmp r11, 0
         jne .copy_loop
 
         ret
