@@ -1,4 +1,4 @@
-BUFFER_LEN equ 32
+BUFFER_LEN equ 64
 
 ; my_printf(const char * fmt, ...)
 global my_printf
@@ -56,13 +56,13 @@ my_printf_cdecl:
 
         xor r13, r13            ; num of symbols printed = 0
 
-        mov rbx, r14
-        dec rbx                 ; buf_ptr = &buffer - 1
+        xor rbx, rbx            ; index = 0
+        dec rbx                 ; index = -1 (for main cycle)
 
         mov r8, [rbp]
         dec r8                  ; fmt_ptr = &fmt - 1
 
-        add rbp, 8              ; to the next arg (after fmts)
+        add rbp, 8              ; to the next arg (after fmt)
 
     ;--- scanning loop ---
     .main_loop:
@@ -72,16 +72,13 @@ my_printf_cdecl:
         cmp BYTE [r8], '%'      ; if (*fmt_ptr == '%')
         je .percent
 
-        mov r15, rbx
-        sub r15, r14            ; r15 = buf_ptr - buffer
-
-        cmp r15, BUFFER_LEN     ; checking for overflow
+        cmp rbx, BUFFER_LEN     ; checking for overflow
         jb .do_not_flush
         call flush_buffer
     .do_not_flush:
 
         mov al, BYTE [r8]
-        mov BYTE [rbx], al
+        mov BYTE [r14 + rbx], al
         jmp .loop_end
 
     .percent:
@@ -123,6 +120,7 @@ my_printf_cdecl:
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ; Return:
+;   r8++
 ; Destr: rdx rax r8 rbx rbp
 ;--------------------------------------
 handle_percent:
@@ -140,7 +138,7 @@ handle_percent:
         ; jump table is in .rodata at the end of file
 
     .default:
-        mov BYTE [rbx], '%'
+        mov BYTE [r14 + rbx], '%'
 
         ret
 ;================================================
@@ -159,7 +157,7 @@ handle_percent:
 ;--------------------------------------
 handle_c:
         mov al, BYTE [rbp]
-        mov BYTE [rbx], al
+        mov BYTE [r14 + rbx], al
 
         add rbp, 8
 
@@ -188,8 +186,7 @@ handle_s:
         ja .too_long_str
 
     ; --- overflow check ---
-        lea rcx, [rbx + rax]    ; rcx = new_pos in buffer (hypothetically)
-        sub rcx, r14            ; rcx = index in buffer
+        lea rcx, [rbx + rax]    ; rcx = new index in buffer (hypothetically)
 
         cmp rcx, BUFFER_LEN
         jb .not_flushing
@@ -201,7 +198,7 @@ handle_s:
         pop rax
     .not_flushing:
     ; --- overflow check ---
-
+        lea rsi, [r14 + rbx]
         call my_strncpy
         add rbx, rax        ; buf_ptr += strlen(arg_str)
 
@@ -261,10 +258,7 @@ print_b_o_x:
     ; --- overflow check ---
         xchg rcx, r9                    ; saving rcx in r9
 
-        mov r15, rbx
-        sub r15, r14
-
-        cmp r15, BUFFER_LEN - 32        ; 32 is max len of %b
+        cmp rbx, BUFFER_LEN - 32        ; 32 is max len of %b
         jb .not_flushing
 
         call flush_buffer
@@ -339,10 +333,7 @@ handle_d:
         push rax
 
     ; --- overflow check ---
-        mov r15, rbx
-        sub r15, r14
-
-        cmp r15, BUFFER_LEN - 11        ; 11 is len of -INT_MAX
+        cmp rbx, BUFFER_LEN - 11        ; 11 is len of -INT_MAX
         jb .not_flushing
 
         call flush_buffer
@@ -354,7 +345,7 @@ handle_d:
         test eax, 0x70000000
         jz print_unsigned
 
-        mov BYTE [rbx], '-'
+        mov BYTE [r14 + rbx], '-'
         inc rbx
 
         neg eax
@@ -379,10 +370,7 @@ handle_u:
         push rax
 
     ; --- overflow check ---
-        mov r15, rbx
-        sub r15, r14
-
-        cmp r15, BUFFER_LEN - 10        ; 10 is len of UINT_MAX
+        cmp rbx, BUFFER_LEN - 10        ; 10 is len of UINT_MAX
         jb .not_flushing
 
         call flush_buffer
@@ -391,7 +379,7 @@ handle_u:
 
         mov eax, [rbp]              ; eax = number
 
-;   !FALLING THROUGH!
+;   !!!FALLING THROUGH!!!
 ;------------------------------------
 ; This function is used by handle_u and handle_d
 ;------------------------------------
@@ -446,7 +434,7 @@ from_num_to_buf:
         dec r11
         inc rbx
         mov dl, BYTE [rsi + r11]
-        mov BYTE [rbx], dl
+        mov BYTE [r14 + rbx], dl
 
         cmp r11, 0
         jne .copy_loop
@@ -459,7 +447,7 @@ from_num_to_buf:
 ;--------------------------------------
 ; My realisation of strncpy
 ; Entry:
-;   rbx = dest addr
+;   rsi = dest addr
 ;   rdi = src addr
 ;   rax = num of chars to copy
 ; Return: -
@@ -469,7 +457,7 @@ my_strncpy:
         xor    rcx, rcx
     .copy_loop:
         mov dl, [rdi + rcx]
-        mov [rbx + rcx], dl
+        mov [rsi + rcx], dl
 
         inc rcx
         cmp rcx, rax
@@ -483,26 +471,25 @@ my_strncpy:
 ;--------------------------------------
 ; Flushes buffer from .bss
 ; Entry:
-;   rbx = current pos in buffer
+;   r14 = buffer addr
+;   rbx = current index in buffer
 ;   r13 = num of printed chars
 ; Return:
 ;   r13 = new num of printed chars
-;   rbx = start pos in buffer
-; Destr: rax, rdi, r8, rdx
+;   rbx = 0
+; Destr: rax, rdi, r8, rdx, rbx
 ;--------------------------------------
 flush_buffer:
-        mov rsi, r14
+        mov rsi, r14        ; str = buf_adr
 
         mov rdx, rbx
-        sub rdx, r14
-
         add r13, rdx
-
-        mov rbx, rsi        ; to the start
 
         mov rax, 0x01       ; write(rdi, r8, rdx)
         mov rdi, 1          ; stdout
         syscall
+
+        xor rbx, rbx        ; to the start
 
         ret
 ;================================================
