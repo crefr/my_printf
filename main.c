@@ -8,8 +8,10 @@ int main()
 {
     my_printf("aboba\n");
 
+    // printf("%f\n", 0.1f);
+
     printf("<ret value: %d>\n",
-    my_printf("1234567890 %s %x", "aaaaaaaaaa12345678901", 0xEDA));
+    my_printf("1234567890 %s %x %d %b", "abobababa", 0xEDA, 3802, 52));
 
     return 0;
 }

@@ -1,6 +1,8 @@
-BUFFER_LEN equ 128
+BUFFER_LEN equ 128       ; >= 32!!!
 
 extern puts
+; extern fputs
+; extern stdout@GLIBC_2.2.5
 
 ; my_printf(const char * fmt, ...)
 global my_printf
@@ -34,18 +36,22 @@ my_printf:
 ; my_printf_cdecl(const char * fmt, ...)
 ; My realisation of printf
 ; Entry:
-;   args in cdecl format
+;   args in stack
 ; Return:
 ;   num of symbols printed
 ; Destr: rax,
 ;--------------------------------------
 my_printf_cdecl:
-        push rbp                ; saving rbp for caller
-        lea rbp, [rsp + 16]        ; rbp is on the 1st arg
+        push rbp                    ; saving rbp for caller
+        lea rbp, [rsp + 16]         ; rbp is on the 1st arg
 
     ; calling glibc function puts
         mov rdi, HELLO_STR
         call puts
+
+        ; mov rdi, HELLO_STR
+        ; mov rsi, stdout@GLIBC_2.2.5
+        ; call fputs
     ; ----------------------
 
     ; saving other registers for caller
@@ -66,6 +72,7 @@ my_printf_cdecl:
         xor rbx, rbx            ; index = 0
         dec rbx                 ; index = -1 (for main cycle)
 
+        ; mov r8, rdi
         mov r8, [rbp]
         dec r8                  ; fmt_ptr = &fmt - 1
 
@@ -124,16 +131,18 @@ my_printf_cdecl:
 ; Handles % symbol in fmt string
 ; Entry:
 ;   r8 = current addr in fmt (on the % symbol)
-;   rbx = current addr in buffer
+;   r14 = addr of buffer
+;   rbx = current index in buffer
 ;   rbp = current arg pointer
 ; Return:
 ;   r8++
+;   rbx = new index in buffer
 ; Destr: rdx rax r8 rbx rbp
 ;--------------------------------------
 handle_percent:
         xor rdx, rdx
 
-        inc r8                 ; to the next symbol
+        inc r8                  ; to the next symbol
         mov dl, BYTE [r8]
 
         sub dl, 'b'
@@ -156,7 +165,8 @@ handle_percent:
 ; Handles %c specification
 ; Entry:
 ;   r8 = current addr in fmt (on the s symbol)
-;   rbx = current addr in buffer
+;   r14 = addr of buffer
+;   rbx = current index in buffer
 ;   rbp = current arg pointer
 ; Return:
 ;   rbp is on the next arg
@@ -177,7 +187,8 @@ handle_c:
 ; Handles %s specification
 ; Entry:
 ;   r8 = current addr in fmt (on the s symbol)
-;   rbx = current addr in buffer
+;   r14 = addr of buffer
+;   rbx = current index in buffer
 ;   rbp = current arg pointer
 ; Return:
 ;   rbx = new addr in buffer
@@ -240,28 +251,36 @@ handle_s:
 ; Set of functions that handles %b, %o and %x
 ; Entry:
 ;   r8 = current addr in fmt (on the b, o or x symbol)
-;   rbx = current addr in buffer
+;   r14 = addr of buffer
+;   rbx = current index in buffer
 ;   rbp = current arg pointer
 ; Return:
 ;   rbp - on the next arg
-; Destr: rcx, r9, r11, rbp
+; Destr: rcx, r9, r11, rbp, rdx, rax
 ;--------------------------------------
 handle_b:
         mov cl, 1
+        mov ch, 0x01
         jmp print_b_o_x
 
 handle_o:
         mov cl, 3
+        mov ch, 0x07
         jmp print_b_o_x
 
 handle_x:
         mov cl, 4
+        mov ch, 0x0F
        ;jmp print_b_o_x
 
-print_b_o_x:
-        push rax
-        push rdx
 
+;--------------------------------------
+; Prints specifications that use 2^n radix
+; Entry:
+;   cl = num of bits to shift
+;   ch = mask for one digit
+;--------------------------------------
+print_b_o_x:
     ; --- overflow check ---
         xchg rcx, r9                    ; saving rcx in r9
 
@@ -285,9 +304,9 @@ print_b_o_x:
 
         mov eax, [rbp]
 
-        mov ch, -1
-        shl ch, cl
-        not ch                  ; ch = b0...01...1, cl = num of 1
+        ; mov ch, -1
+        ; shl ch, cl
+        ; not ch                  ; ch = b0...01...1, cl = num of 1
 
     .print_loop:
         mov dl, ch
@@ -316,9 +335,6 @@ print_b_o_x:
 
         add rsp, 32                 ; deallocating number buffer
 
-        pop rdx
-        pop rax
-
         ret
 ;================================================
 
@@ -328,17 +344,14 @@ print_b_o_x:
 ; Handles %d specification
 ; Entry:
 ;   r8 = current addr in fmt (on the d symbol)
+;   r14 = buffer start addr
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
-;   r14 = buffer start addr
 ; Return:
 ;   rbx = new addr in buffer
-; Destr: r11, rbx, rdi
+; Destr: r11, rbx, rdi, rdx, rax
 ;--------------------------------------
 handle_d:
-        push rdx
-        push rax
-
     ; --- overflow check ---
         cmp rbx, BUFFER_LEN - 11        ; 11 is len of -INT_MAX
         jb .not_flushing
@@ -366,16 +379,14 @@ handle_d:
 ; Handles %u specification
 ; Entry:
 ;   r8 = current addr in fmt (on the u symbol)
+;   r14 = addr of buffer
 ;   rbx = current addr in buffer
 ;   rbp = current arg pointer
 ;   r11 = num_buf addr
 ; Return: -
-; Destr: r11, rbx, rdi
+; Destr: r11, rbx, rdi, rdx, rax
 ;--------------------------------------
 handle_u:
-        push rdx
-        push rax
-
     ; --- overflow check ---
         cmp rbx, BUFFER_LEN - 10        ; 10 is len of UINT_MAX
         jb .not_flushing
@@ -416,9 +427,6 @@ print_unsigned:
 
         add rsp, 32                 ; deallocating number buffer
 
-        pop rax
-        pop rdx
-
         ret
 ;================================================
 
@@ -429,9 +437,9 @@ print_unsigned:
 ; Entry:
 ;   rsi = addr of num_buf
 ;   r11 = index in num_buf
-;   rbx = current arg pointer
+;   rbx = current index in output buffer
 ; Return:
-;   rbx = new addr in buffer
+;   rbx = new index in buffer
 ;   r11 = new addr in num_buf
 ; Destr: rbx, r11, rdx
 ;--------------------------------------
@@ -476,7 +484,8 @@ my_strncpy:
 
 ;================================================
 ;--------------------------------------
-; Flushes buffer from .bss
+; Flushes buffer: makes syscall 0x01 (write)
+; and sets index to 0
 ; Entry:
 ;   r14 = buffer addr
 ;   rbx = current index in buffer

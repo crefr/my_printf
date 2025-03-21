@@ -18,7 +18,7 @@ $(ASM_OBJS): $(asm_sources)
 	nasm -f elf64 -l $(addsuffix .lst, $(basename $<)) $< -o $@
 
 $(C_OBJS):	$(c_sources)
-	$(CC) $(CFLAGS) -g3 -O0 -c $< -o $@
+	$(CC) $(CFLAGS) -g3 -Og -c $< -o $@
 
 dump:
 	objdump -d -Mintel $(FILENAME) > $(basename $(FILENAME)).disasm
