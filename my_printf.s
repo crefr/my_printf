@@ -72,7 +72,6 @@ my_printf_cdecl:
         xor rbx, rbx            ; index = 0
         dec rbx                 ; index = -1 (for main cycle)
 
-        ; mov r8, rdi
         mov r8, [rbp]
         dec r8                  ; fmt_ptr = &fmt - 1
 
@@ -273,6 +272,7 @@ handle_x:
         mov ch, 0x0F
        ;jmp print_b_o_x
 
+    ; !!! FALLING THROUGH !!!
 
 ;--------------------------------------
 ; Prints specifications that use 2^n radix
